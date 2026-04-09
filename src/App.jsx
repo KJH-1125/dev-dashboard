@@ -579,9 +579,10 @@ function TodoPanel() {
 // ── 링크 북마크 ───────────────────────────────────────
 function LinksPanel() {
   const [links, setLinks] = useLocalStorage("dev-links", [
-    { id: 1, title: "GitLab", url: "https://gitlab.com", category: "개발" },
-    { id: 2, title: "PostgreSQL Docs", url: "https://www.postgresql.org/docs/", category: "레퍼런스" },
-    { id: 3, title: "Vue 3 Docs", url: "https://vuejs.org/", category: "레퍼런스" },
+    { id: 1, title: "GitHub (개인)", url: "https://github.com/KJH-1125", category: "개발" },
+    { id: 2, title: "GitLab (회사)", url: "http://koreasoft.synology.me:30000/", category: "개발" },
+    { id: 3, title: "PostgreSQL Docs", url: "https://www.postgresql.org/docs/", category: "레퍼런스" },
+    { id: 4, title: "Vue 3 Docs", url: "https://vuejs.org/", category: "레퍼런스" },
   ]);
   const [form, setForm] = useState({ title: "", url: "", category: "" });
   const [showAdd, setShowAdd] = useState(false);
