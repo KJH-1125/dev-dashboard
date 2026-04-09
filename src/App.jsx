@@ -364,20 +364,65 @@ function DiffPanel() {
 }
 
 // ── TODO ──────────────────────────────────────────────
+const PRIORITIES = [
+  { id: "high",   label: "높음", color: "#f87171", bg: "#3a1a1a" },
+  { id: "medium", label: "중간", color: "#d29922", bg: "#3a2a0a" },
+  { id: "low",    label: "낮음", color: "#8b949e", bg: "#1c2333" },
+];
+
+function isOverdue(dueDate) {
+  if (!dueDate) return false;
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  return new Date(dueDate) < today;
+}
+
+function formatDue(dueDate) {
+  if (!dueDate) return "";
+  const d = new Date(dueDate);
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const diff = Math.ceil((d - today) / 86400000);
+  if (diff < 0) return `${Math.abs(diff)}일 지남`;
+  if (diff === 0) return "오늘";
+  if (diff === 1) return "내일";
+  return `${diff}일 남음`;
+}
+
 function TodoPanel() {
   const [todos, setTodos] = useLocalStorage("dev-todos", []);
   const [input, setInput] = useState("");
+  const [priority, setPriority] = useState("medium");
+  const [dueDate, setDueDate] = useState("");
   const [filter, setFilter] = useState("all");
+  const [editId, setEditId] = useState(null);
+  const [editText, setEditText] = useState("");
 
   const add = () => {
     if (!input.trim()) return;
-    setTodos([...todos, { id: Date.now(), text: input.trim(), done: false, ts: new Date().toLocaleDateString("ko-KR") }]);
-    setInput("");
+    setTodos([...todos, {
+      id: Date.now(), text: input.trim(), done: false,
+      ts: new Date().toLocaleDateString("ko-KR"),
+      priority, dueDate: dueDate || null,
+    }]);
+    setInput(""); setDueDate("");
   };
   const toggle = id => setTodos(todos.map(t => t.id === id ? { ...t, done: !t.done } : t));
   const remove = id => setTodos(todos.filter(t => t.id !== id));
+  const clearDone = () => setTodos(todos.filter(t => !t.done));
 
-  const filtered = todos.filter(t =>
+  const startEdit = (t) => { setEditId(t.id); setEditText(t.text); };
+  const saveEdit = () => {
+    if (!editText.trim()) return;
+    setTodos(todos.map(t => t.id === editId ? { ...t, text: editText.trim() } : t));
+    setEditId(null); setEditText("");
+  };
+  const cancelEdit = () => { setEditId(null); setEditText(""); };
+
+  const sorted = [...todos].sort((a, b) => {
+    const pOrder = { high: 0, medium: 1, low: 2 };
+    if (a.done !== b.done) return a.done ? 1 : -1;
+    return (pOrder[a.priority] || 1) - (pOrder[b.priority] || 1);
+  });
+  const filtered = sorted.filter(t =>
     filter === "all" ? true : filter === "done" ? t.done : !t.done
   );
   const doneCount = todos.filter(t => t.done).length;
@@ -388,6 +433,10 @@ function TodoPanel() {
         <span style={styles.statBadge}>전체 {todos.length}</span>
         <span style={{ ...styles.statBadge, background: "#1a3a2a", color: "#4ade80" }}>완료 {doneCount}</span>
         <span style={{ ...styles.statBadge, background: "#3a1a1a", color: "#f87171" }}>미완료 {todos.length - doneCount}</span>
+        {doneCount > 0 && (
+          <button style={{ ...styles.btnSecondary, fontSize: 11, padding: "4px 10px", marginLeft: "auto" }}
+            onClick={clearDone}>🗑️ 완료 항목 삭제</button>
+        )}
       </div>
       <div style={styles.todoInput}>
         <input
@@ -397,6 +446,16 @@ function TodoPanel() {
           onChange={e => setInput(e.target.value)}
           onKeyDown={e => e.key === "Enter" && add()}
         />
+        <input type="date" style={{ ...styles.input, flex: "none", width: 140, fontSize: 12 }}
+          value={dueDate} onChange={e => setDueDate(e.target.value)} />
+        <div style={{ display: "flex", gap: 2 }}>
+          {PRIORITIES.map(p => (
+            <button key={p.id}
+              style={{ ...styles.modeBtn, fontSize: 11, padding: "4px 8px", marginBottom: 0,
+                ...(priority === p.id ? { background: p.bg, borderColor: p.color, color: p.color } : {}) }}
+              onClick={() => setPriority(p.id)}>{p.label}</button>
+          ))}
+        </div>
         <button style={styles.btn} onClick={add}>+ 추가</button>
       </div>
       <div style={styles.modeBar}>
@@ -409,14 +468,36 @@ function TodoPanel() {
       </div>
       <div style={styles.todoList}>
         {filtered.length === 0 && <div style={styles.empty}>할 일이 없어요 🎉</div>}
-        {filtered.map(t => (
-          <div key={t.id} style={{ ...styles.todoItem, opacity: t.done ? 0.5 : 1 }}>
-            <input type="checkbox" checked={t.done} onChange={() => toggle(t.id)} style={{ cursor: "pointer", accentColor: "#38bdf8" }} />
-            <span style={{ ...styles.todoText, textDecoration: t.done ? "line-through" : "none" }}>{t.text}</span>
-            <span style={styles.todoDate}>{t.ts}</span>
-            <button style={styles.delBtn} onClick={() => remove(t.id)}>✕</button>
-          </div>
-        ))}
+        {filtered.map(t => {
+          const pri = PRIORITIES.find(p => p.id === t.priority) || PRIORITIES[1];
+          const overdue = !t.done && isOverdue(t.dueDate);
+          return (
+            <div key={t.id} style={{ ...styles.todoItem, opacity: t.done ? 0.5 : 1,
+              borderLeft: `3px solid ${pri.color}` }}>
+              <input type="checkbox" checked={t.done} onChange={() => toggle(t.id)}
+                style={{ cursor: "pointer", accentColor: "#38bdf8", flexShrink: 0 }} />
+              {editId === t.id ? (
+                <input style={{ ...styles.input, flex: 1, marginBottom: 0 }}
+                  value={editText} onChange={e => setEditText(e.target.value)} autoFocus
+                  onKeyDown={e => { if (e.key === "Enter") saveEdit(); if (e.key === "Escape") cancelEdit(); }}
+                  onBlur={saveEdit} />
+              ) : (
+                <span style={{ ...styles.todoText, textDecoration: t.done ? "line-through" : "none", cursor: "pointer" }}
+                  onDoubleClick={() => !t.done && startEdit(t)}>{t.text}</span>
+              )}
+              <span style={{ fontSize: 10, padding: "2px 6px", borderRadius: 3,
+                background: pri.bg, color: pri.color, flexShrink: 0 }}>{pri.label}</span>
+              {t.dueDate && (
+                <span style={{ fontSize: 11, color: overdue ? "#f87171" : C.textMuted, flexShrink: 0,
+                  fontWeight: overdue ? 700 : 400 }}>
+                  {formatDue(t.dueDate)}
+                </span>
+              )}
+              <span style={styles.todoDate}>{t.ts}</span>
+              <button style={styles.delBtn} onClick={() => remove(t.id)}>✕</button>
+            </div>
+          );
+        })}
       </div>
     </div>
   );
