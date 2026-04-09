@@ -1,6 +1,13 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useCallback } from "react";
 import { format as sqlFormat } from "sql-formatter";
 import { diffLines, diffWords } from "diff";
+import { createClient } from "@supabase/supabase-js";
+
+// ── Supabase ─────────────────────────────────────────
+const supabase = createClient(
+  "https://aysfcxosqwzibitnurur.supabase.co",
+  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImF5c2ZjeG9zcXd6aWJpdG51cnVyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU2ODczNTQsImV4cCI6MjA5MTI2MzM1NH0.2uU6omrpE83h8ZdIPIuhJS8Vr1HOBfeEnMtQkplvi5g"
+);
 
 // ── 상수 ──────────────────────────────────────────────
 const NAV_ITEMS = [
@@ -387,8 +394,13 @@ function formatDue(dueDate) {
   return `${diff}일 남음`;
 }
 
+function mapRow(r) {
+  return { id: r.id, text: r.text, done: r.done, priority: r.priority, dueDate: r.due_date, memo: r.memo || "", ts: new Date(r.created_at).toLocaleDateString("ko-KR") };
+}
+
 function TodoPanel() {
-  const [todos, setTodos] = useLocalStorage("dev-todos", []);
+  const [todos, setTodos] = useState([]);
+  const [loading, setLoading] = useState(true);
   const [input, setInput] = useState("");
   const [priority, setPriority] = useState("medium");
   const [dueDate, setDueDate] = useState("");
@@ -397,28 +409,70 @@ function TodoPanel() {
   const [editText, setEditText] = useState("");
   const [expandedId, setExpandedId] = useState(null);
 
-  const add = () => {
+  const fetchTodos = useCallback(async () => {
+    const { data } = await supabase.from("todos").select("*").order("created_at", { ascending: true });
+    if (data) setTodos(data.map(mapRow));
+    setLoading(false);
+  }, []);
+
+  useEffect(() => {
+    // localStorage → Supabase 마이그레이션 (최초 1회)
+    const migrate = async () => {
+      const raw = localStorage.getItem("dev-todos");
+      if (raw) {
+        try {
+          const old = JSON.parse(raw);
+          if (Array.isArray(old) && old.length > 0) {
+            const rows = old.map(t => ({
+              text: t.text, done: t.done ?? false, priority: t.priority || "medium",
+              due_date: t.dueDate || null, memo: t.memo || "",
+            }));
+            await supabase.from("todos").insert(rows);
+          }
+        } catch {}
+        localStorage.removeItem("dev-todos");
+      }
+      fetchTodos();
+    };
+    migrate();
+  }, [fetchTodos]);
+
+  const add = async () => {
     if (!input.trim()) return;
-    setTodos([...todos, {
-      id: Date.now(), text: input.trim(), done: false,
-      ts: new Date().toLocaleDateString("ko-KR"),
-      priority, dueDate: dueDate || null, memo: "",
-    }]);
+    const { data } = await supabase.from("todos").insert({
+      text: input.trim(), priority, due_date: dueDate || null, memo: "",
+    }).select();
+    if (data) setTodos(prev => [...prev, ...data.map(mapRow)]);
     setInput(""); setDueDate("");
   };
-  const toggle = id => setTodos(todos.map(t => t.id === id ? { ...t, done: !t.done } : t));
-  const remove = id => setTodos(todos.filter(t => t.id !== id));
-  const clearDone = () => setTodos(todos.filter(t => !t.done));
+  const toggle = async (id) => {
+    const todo = todos.find(t => t.id === id);
+    if (!todo) return;
+    await supabase.from("todos").update({ done: !todo.done }).eq("id", id);
+    setTodos(todos.map(t => t.id === id ? { ...t, done: !t.done } : t));
+  };
+  const remove = async (id) => {
+    await supabase.from("todos").delete().eq("id", id);
+    setTodos(todos.filter(t => t.id !== id));
+  };
+  const clearDone = async () => {
+    await supabase.from("todos").delete().eq("done", true);
+    setTodos(todos.filter(t => !t.done));
+  };
 
   const startEdit = (t) => { setEditId(t.id); setEditText(t.text); };
-  const saveEdit = () => {
+  const saveEdit = async () => {
     if (!editText.trim()) return;
+    await supabase.from("todos").update({ text: editText.trim() }).eq("id", editId);
     setTodos(todos.map(t => t.id === editId ? { ...t, text: editText.trim() } : t));
     setEditId(null); setEditText("");
   };
   const cancelEdit = () => { setEditId(null); setEditText(""); };
   const toggleExpand = (id) => setExpandedId(expandedId === id ? null : id);
-  const updateMemo = (id, memo) => setTodos(todos.map(t => t.id === id ? { ...t, memo } : t));
+  const updateMemo = async (id, memo) => {
+    setTodos(todos.map(t => t.id === id ? { ...t, memo } : t));
+    await supabase.from("todos").update({ memo }).eq("id", id);
+  };
 
   const sorted = [...todos].sort((a, b) => {
     const pOrder = { high: 0, medium: 1, low: 2 };
@@ -470,7 +524,8 @@ function TodoPanel() {
         ))}
       </div>
       <div style={styles.todoList}>
-        {filtered.length === 0 && <div style={styles.empty}>할 일이 없어요 🎉</div>}
+        {loading && <div style={styles.empty}>불러오는 중...</div>}
+        {!loading && filtered.length === 0 && <div style={styles.empty}>할 일이 없어요 🎉</div>}
         {filtered.map(t => {
           const pri = PRIORITIES.find(p => p.id === t.priority) || PRIORITIES[1];
           const overdue = !t.done && isOverdue(t.dueDate);
