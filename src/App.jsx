@@ -1,13 +1,14 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useMemo } from "react";
+import { format as sqlFormat } from "sql-formatter";
+import { diffLines, diffWords } from "diff";
 
 // ── 상수 ──────────────────────────────────────────────
-const CLAUDE_MODEL = "claude-sonnet-4-20250514";
-
 const NAV_ITEMS = [
   { id: "monday", label: "Monday", icon: "📋" },
-  { id: "sql",    label: "SQL 도우미", icon: "🗄️" },
-  { id: "code",   label: "코드 리뷰", icon: "🔍" },
-  { id: "commit", label: "커밋 메시지", icon: "📝" },
+  { id: "sql",    label: "SQL 포맷터", icon: "🗄️" },
+  { id: "json",   label: "JSON 포맷터", icon: "{ }" },
+  { id: "commit", label: "커밋 빌더", icon: "📝" },
+  { id: "diff",   label: "Diff 비교", icon: "🔀" },
   { id: "todo",   label: "TODO", icon: "✅" },
   { id: "links",  label: "링크 모음", icon: "🔗" },
 ];
@@ -22,74 +23,166 @@ function useLocalStorage(key, init) {
   return [val, save];
 }
 
-async function callClaude(apiKey, systemPrompt, userContent, onChunk) {
-  if (!apiKey) throw new Error("API 키를 먼저 설정해주세요 (사이드바 하단 ⚙️)");
-  const res = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-api-key": apiKey,
-      "anthropic-version": "2023-06-01",
-      "anthropic-dangerous-direct-browser-access": "true",
-    },
-    body: JSON.stringify({
-      model: CLAUDE_MODEL,
-      max_tokens: 1000,
-      system: systemPrompt,
-      messages: [{ role: "user", content: userContent }],
-    }),
-  });
-  if (!res.ok) {
-    const errBody = await res.json().catch(() => null);
-    throw new Error(errBody?.error?.message || `API error ${res.status}`);
-  }
-  const data = await res.json();
-  const text = data.content?.map(b => b.text || "").join("") || "";
-  onChunk(text);
-  return text;
-}
-
-// ── AI 패널 공통 래퍼 ─────────────────────────────────
-function AiPanel({ apiKey, placeholder, systemPrompt, inputLabel = "입력", outputLabel = "결과", formatOutput }) {
+// ── SQL 포맷터 ────────────────────────────────────────
+function SqlPanel() {
   const [input, setInput] = useState("");
   const [output, setOutput] = useState("");
-  const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [dialect, setDialect] = useState("postgresql");
+  const [indentSize, setIndentSize] = useState(2);
+  const [uppercase, setUppercase] = useState(true);
 
-  const run = async () => {
+  const dialects = [
+    { id: "postgresql", label: "PostgreSQL" },
+    { id: "mysql", label: "MySQL" },
+    { id: "transactsql", label: "MSSQL" },
+    { id: "sql", label: "Standard" },
+  ];
+
+  const formatSql = () => {
     if (!input.trim()) return;
-    setLoading(true); setError(""); setOutput("");
+    setError("");
     try {
-      await callClaude(apiKey, systemPrompt, input, setOutput);
+      const result = sqlFormat(input, {
+        language: dialect,
+        tabWidth: indentSize,
+        keywordCase: uppercase ? "upper" : "preserve",
+      });
+      setOutput(result);
     } catch (e) {
-      setError(e.message);
-    } finally {
-      setLoading(false);
+      setError("포맷 오류: " + e.message);
+      setOutput("");
     }
   };
 
   return (
-    <div style={styles.aiPanel}>
+    <div>
+      <div style={styles.modeBar}>
+        {dialects.map(d => (
+          <button key={d.id} style={{ ...styles.modeBtn, ...(dialect === d.id ? styles.modeBtnActive : {}) }}
+            onClick={() => setDialect(d.id)}>{d.label}</button>
+        ))}
+      </div>
+      <div style={styles.optionsBar}>
+        <span style={styles.label}>들여쓰기</span>
+        {[2, 4].map(n => (
+          <button key={n} style={{ ...styles.modeBtn, ...(indentSize === n ? styles.modeBtnActive : {}) }}
+            onClick={() => setIndentSize(n)}>{n}칸</button>
+        ))}
+        <span style={{ ...styles.label, marginLeft: 12 }}>키워드</span>
+        <button style={{ ...styles.modeBtn, ...(uppercase ? styles.modeBtnActive : {}) }}
+          onClick={() => setUppercase(!uppercase)}>{uppercase ? "UPPER" : "preserve"}</button>
+      </div>
       <div style={styles.panelGrid}>
         <div style={styles.panelLeft}>
-          <label style={styles.label}>{inputLabel}</label>
+          <label style={styles.label}>SQL 입력</label>
           <textarea
             style={styles.textarea}
-            placeholder={placeholder}
+            placeholder={"SELECT u.name, COUNT(o.id) FROM users u\nLEFT JOIN orders o ON u.id = o.user_id\nGROUP BY u.name"}
             value={input}
             onChange={e => setInput(e.target.value)}
-            onKeyDown={e => e.ctrlKey && e.key === "Enter" && run()}
+            onKeyDown={e => e.ctrlKey && e.key === "Enter" && formatSql()}
           />
-          <button style={styles.btn} onClick={run} disabled={loading}>
-            {loading ? <span style={styles.spinner}>⏳</span> : "▶ 실행  (Ctrl+Enter)"}
-          </button>
+          <button style={styles.btn} onClick={formatSql}>▶ 포맷  (Ctrl+Enter)</button>
         </div>
         <div style={styles.panelRight}>
-          <label style={styles.label}>{outputLabel}</label>
+          <label style={styles.label}>포맷 결과</label>
           <div style={styles.outputBox}>
             {error && <span style={{ color: "#ff6b6b" }}>{error}</span>}
             {output
-              ? (formatOutput ? formatOutput(output) : <pre style={styles.pre}>{output}</pre>)
+              ? <pre style={styles.pre}>{output}</pre>
+              : <span style={styles.placeholder}>포맷된 SQL이 여기에 표시됩니다</span>}
+          </div>
+          {output && (
+            <button style={styles.btnSecondary} onClick={() => navigator.clipboard.writeText(output)}>
+              📋 복사
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── JSON 포맷터 ───────────────────────────────────────
+function JsonPanel() {
+  const [input, setInput] = useState("");
+  const [output, setOutput] = useState("");
+  const [error, setError] = useState("");
+  const [mode, setMode] = useState("format");
+  const [indentSize, setIndentSize] = useState(2);
+
+  const modes = [
+    { id: "format", label: "Format" },
+    { id: "minify", label: "Minify" },
+    { id: "validate", label: "Validate" },
+  ];
+
+  const processJson = () => {
+    if (!input.trim()) return;
+    setError(""); setOutput("");
+    try {
+      const parsed = JSON.parse(input);
+      switch (mode) {
+        case "format":
+          setOutput(JSON.stringify(parsed, null, indentSize));
+          break;
+        case "minify":
+          setOutput(JSON.stringify(parsed));
+          break;
+        case "validate": {
+          const type = Array.isArray(parsed) ? `Array (${parsed.length}개)` : typeof parsed === "object" ? `Object (${Object.keys(parsed).length}개 키)` : typeof parsed;
+          setOutput(`✅ 유효한 JSON입니다.\n\n타입: ${type}\n크기: ${new Blob([input]).size} bytes`);
+          break;
+        }
+      }
+    } catch (e) {
+      const match = e.message.match(/position (\d+)/);
+      const pos = match ? parseInt(match[1]) : null;
+      let errorMsg = "❌ " + e.message;
+      if (pos !== null) {
+        const lines = input.substring(0, pos).split("\n");
+        errorMsg += `\n\n위치: ${lines.length}번째 줄, ${lines[lines.length - 1].length + 1}번째 문자`;
+      }
+      setError(errorMsg);
+    }
+  };
+
+  return (
+    <div>
+      <div style={styles.modeBar}>
+        {modes.map(m => (
+          <button key={m.id} style={{ ...styles.modeBtn, ...(mode === m.id ? styles.modeBtnActive : {}) }}
+            onClick={() => setMode(m.id)}>{m.label}</button>
+        ))}
+        {mode === "format" && (
+          <>
+            <span style={{ ...styles.label, marginLeft: 12 }}>들여쓰기</span>
+            {[2, 4].map(n => (
+              <button key={n} style={{ ...styles.modeBtn, ...(indentSize === n ? styles.modeBtnActive : {}) }}
+                onClick={() => setIndentSize(n)}>{n}칸</button>
+            ))}
+          </>
+        )}
+      </div>
+      <div style={styles.panelGrid}>
+        <div style={styles.panelLeft}>
+          <label style={styles.label}>JSON 입력</label>
+          <textarea
+            style={styles.textarea}
+            placeholder={'{"name": "홍길동", "age": 30, "skills": ["React", "Node.js"]}'}
+            value={input}
+            onChange={e => setInput(e.target.value)}
+            onKeyDown={e => e.ctrlKey && e.key === "Enter" && processJson()}
+          />
+          <button style={styles.btn} onClick={processJson}>▶ 실행  (Ctrl+Enter)</button>
+        </div>
+        <div style={styles.panelRight}>
+          <label style={styles.label}>결과</label>
+          <div style={styles.outputBox}>
+            {error && <pre style={{ ...styles.pre, color: "#ff6b6b" }}>{error}</pre>}
+            {output
+              ? <pre style={styles.pre}>{output}</pre>
               : <span style={styles.placeholder}>결과가 여기에 표시됩니다</span>}
           </div>
           {output && (
@@ -103,123 +196,169 @@ function AiPanel({ apiKey, placeholder, systemPrompt, inputLabel = "입력", out
   );
 }
 
-// ── SQL 도우미 ─────────────────────────────────────────
-function SqlPanel({ apiKey }) {
-  const [mode, setMode] = useState("explain");
-  const modes = [
-    { id: "explain", label: "설명" },
-    { id: "optimize", label: "최적화" },
-    { id: "convert", label: "MSSQL→PG 변환" },
-    { id: "generate", label: "쿼리 생성" },
+// ── 커밋 빌더 ─────────────────────────────────────────
+function CommitPanel() {
+  const [type, setType] = useState("feat");
+  const [scope, setScope] = useState("");
+  const [description, setDescription] = useState("");
+  const [body, setBody] = useState("");
+  const [breaking, setBreaking] = useState(false);
+  const [breakingDesc, setBreakingDesc] = useState("");
+
+  const types = [
+    { id: "feat",     label: "feat",     desc: "새 기능" },
+    { id: "fix",      label: "fix",      desc: "버그 수정" },
+    { id: "refactor", label: "refactor", desc: "리팩토링" },
+    { id: "docs",     label: "docs",     desc: "문서" },
+    { id: "chore",    label: "chore",    desc: "기타 작업" },
+    { id: "style",    label: "style",    desc: "스타일" },
+    { id: "test",     label: "test",     desc: "테스트" },
+    { id: "perf",     label: "perf",     desc: "성능" },
+    { id: "ci",       label: "ci",       desc: "CI/CD" },
+    { id: "build",    label: "build",    desc: "빌드" },
   ];
-  const systemMap = {
-    explain:  "당신은 SQL 전문가입니다. 주어진 SQL 쿼리를 한국어로 친절하게 설명해주세요. 각 절의 역할과 전체 동작을 설명하세요.",
-    optimize: "당신은 PostgreSQL 최적화 전문가입니다. 쿼리의 문제점을 분석하고 개선된 쿼리와 이유를 한국어로 설명해주세요.",
-    convert:  "당신은 MSSQL에서 PostgreSQL 마이그레이션 전문가입니다. MSSQL 문법을 PostgreSQL 문법으로 변환하고, 변경 사항을 한국어로 설명해주세요.",
-    generate: "당신은 SQL 전문가입니다. 사용자의 요구사항을 듣고 PostgreSQL 쿼리를 작성해주세요. 코드와 설명을 한국어로 제공하세요.",
-  };
-  const placeholders = {
-    explain:  "SELECT u.name, COUNT(o.id) FROM users u\nLEFT JOIN orders o ON u.id = o.user_id\nGROUP BY u.name",
-    optimize: "최적화할 쿼리를 붙여넣으세요",
-    convert:  "MSSQL 쿼리를 붙여넣으세요 (GETDATE(), TOP, ISNULL 등)",
-    generate: "어떤 쿼리가 필요한지 설명해주세요\n예: 지난 7일간 주문 수가 많은 상위 10명의 고객",
-  };
+
+  const preview = useMemo(() => {
+    if (!description.trim()) return "";
+    let msg = type;
+    if (scope.trim()) msg += `(${scope.trim()})`;
+    if (breaking) msg += "!";
+    msg += ": " + description.trim();
+    if (body.trim()) msg += "\n\n" + body.trim();
+    if (breaking && breakingDesc.trim()) {
+      msg += "\n\nBREAKING CHANGE: " + breakingDesc.trim();
+    }
+    return msg;
+  }, [type, scope, description, body, breaking, breakingDesc]);
 
   return (
     <div>
-      <div style={styles.modeBar}>
-        {modes.map(m => (
-          <button
-            key={m.id}
-            style={{ ...styles.modeBtn, ...(mode === m.id ? styles.modeBtnActive : {}) }}
-            onClick={() => setMode(m.id)}
-          >{m.label}</button>
-        ))}
+      <div style={styles.panelGrid}>
+        <div style={styles.panelLeft}>
+          <div style={styles.formGroup}>
+            <label style={styles.label}>Type</label>
+            <div style={styles.modeBar}>
+              {types.map(t => (
+                <button key={t.id}
+                  style={{ ...styles.modeBtn, ...(type === t.id ? styles.modeBtnActive : {}) }}
+                  onClick={() => setType(t.id)}
+                  title={t.desc}
+                >{t.label}</button>
+              ))}
+            </div>
+          </div>
+          <div style={styles.formGroup}>
+            <label style={styles.label}>Scope (선택)</label>
+            <input style={styles.input} placeholder="예: auth, api, ui" value={scope}
+              onChange={e => setScope(e.target.value)} />
+          </div>
+          <div style={styles.formGroup}>
+            <label style={styles.label}>Description *</label>
+            <input style={styles.input} placeholder="변경사항을 간결하게 설명" value={description}
+              onChange={e => setDescription(e.target.value)} />
+          </div>
+          <div style={styles.formGroup}>
+            <label style={styles.label}>Body (선택)</label>
+            <textarea style={{ ...styles.textarea, flex: "none", height: 100 }}
+              placeholder="상세 설명이 필요한 경우 작성"
+              value={body} onChange={e => setBody(e.target.value)} />
+          </div>
+          <div style={styles.checkRow}>
+            <input type="checkbox" checked={breaking} onChange={e => setBreaking(e.target.checked)}
+              style={{ cursor: "pointer", accentColor: "#f87171" }} />
+            <span style={{ fontSize: 13, color: breaking ? "#f87171" : C.textMuted }}>Breaking Change</span>
+          </div>
+          {breaking && (
+            <div style={{ ...styles.formGroup, marginTop: 8 }}>
+              <input style={styles.input} placeholder="어떤 변경이 호환성을 깨는지 설명"
+                value={breakingDesc} onChange={e => setBreakingDesc(e.target.value)} />
+            </div>
+          )}
+        </div>
+        <div style={styles.panelRight}>
+          <label style={styles.label}>미리보기</label>
+          <div style={styles.outputBox}>
+            {preview
+              ? <pre style={styles.pre}>{preview}</pre>
+              : <span style={styles.placeholder}>커밋 메시지가 여기에 표시됩니다</span>}
+          </div>
+          {preview && (
+            <button style={styles.btnSecondary} onClick={() => navigator.clipboard.writeText(preview)}>
+              📋 복사
+            </button>
+          )}
+        </div>
       </div>
-      <AiPanel
-        apiKey={apiKey}
-        systemPrompt={systemMap[mode]}
-        placeholder={placeholders[mode]}
-        inputLabel="SQL 입력"
-        outputLabel="분석 결과"
-      />
     </div>
   );
 }
 
-// ── 코드 리뷰 ─────────────────────────────────────────
-function CodePanel({ apiKey }) {
-  const [mode, setMode] = useState("review");
-  const modes = [
-    { id: "review", label: "코드 리뷰" },
-    { id: "convert", label: "언어 변환" },
-    { id: "refactor", label: "리팩토링" },
-  ];
-  const systemMap = {
-    review:   "당신은 시니어 개발자입니다. 주어진 코드를 리뷰하고, 버그 가능성, 성능 문제, 가독성, 베스트 프랙티스 관점에서 한국어로 상세히 피드백하세요.",
-    convert:  "당신은 다국어 개발 전문가입니다. 사용자가 변환 대상 언어를 명시하면 코드를 변환하고 주요 차이점을 한국어로 설명하세요.",
-    refactor: "당신은 클린 코드 전문가입니다. 코드를 더 읽기 쉽고 유지보수하기 좋게 리팩토링하고, 변경 이유를 한국어로 설명하세요.",
-  };
-  const placeholders = {
-    review:   "리뷰받을 코드를 붙여넣으세요",
-    convert:  "// 변환할 언어를 첫 줄에 명시하세요\n// 예: # PHP → Python 변환\n\nfunction hello($name) {\n  return 'Hello, ' . $name;\n}",
-    refactor: "리팩토링할 코드를 붙여넣으세요",
+// ── Diff 비교 ─────────────────────────────────────────
+function DiffPanel() {
+  const [original, setOriginal] = useState("");
+  const [modified, setModified] = useState("");
+  const [diffResult, setDiffResult] = useState([]);
+  const [mode, setMode] = useState("line");
+  const [stats, setStats] = useState(null);
+
+  const computeDiff = () => {
+    const fn = mode === "line" ? diffLines : diffWords;
+    const result = fn(original, modified);
+    setDiffResult(result);
+    const added = result.filter(p => p.added).reduce((s, p) => s + (p.count || 0), 0);
+    const removed = result.filter(p => p.removed).reduce((s, p) => s + (p.count || 0), 0);
+    setStats({ added, removed });
   };
 
-  return (
-    <div>
-      <div style={styles.modeBar}>
-        {modes.map(m => (
-          <button
-            key={m.id}
-            style={{ ...styles.modeBtn, ...(mode === m.id ? styles.modeBtnActive : {}) }}
-            onClick={() => setMode(m.id)}
-          >{m.label}</button>
-        ))}
-      </div>
-      <AiPanel
-        apiKey={apiKey}
-        systemPrompt={systemMap[mode]}
-        placeholder={placeholders[mode]}
-        inputLabel="코드 입력"
-        outputLabel="분석 결과"
-      />
-    </div>
-  );
-}
-
-// ── 커밋 메시지 ───────────────────────────────────────
-function CommitPanel({ apiKey }) {
-  const [style, setStyle] = useState("conventional");
-  const styles2 = [
-    { id: "conventional", label: "Conventional" },
-    { id: "emoji", label: "이모지" },
-    { id: "simple", label: "심플" },
-  ];
-  const systemMap = {
-    conventional: "당신은 Git 전문가입니다. 주어진 변경사항을 바탕으로 Conventional Commits 형식(feat/fix/refactor/docs/chore 등)의 커밋 메시지를 영어로 3가지 옵션으로 제안하세요. 각 옵션에 한국어 설명도 추가하세요.",
-    emoji:        "당신은 Git 전문가입니다. 주어진 변경사항을 바탕으로 이모지를 포함한 커밋 메시지(✨ feat, 🐛 fix, ♻️ refactor 등)를 3가지 옵션으로 제안하세요. 각 옵션에 한국어 설명도 추가하세요.",
-    simple:       "당신은 Git 전문가입니다. 주어진 변경사항을 바탕으로 간결하고 명확한 커밋 메시지를 한국어로 3가지 옵션으로 제안하세요.",
+  const handleKeyDown = (e) => {
+    if (e.ctrlKey && e.key === "Enter") computeDiff();
   };
 
   return (
     <div>
       <div style={styles.modeBar}>
-        {styles2.map(m => (
-          <button
-            key={m.id}
-            style={{ ...styles.modeBtn, ...(style === m.id ? styles.modeBtnActive : {}) }}
-            onClick={() => setStyle(m.id)}
-          >{m.label}</button>
-        ))}
+        <button style={{ ...styles.modeBtn, ...(mode === "line" ? styles.modeBtnActive : {}) }}
+          onClick={() => setMode("line")}>줄 단위</button>
+        <button style={{ ...styles.modeBtn, ...(mode === "word" ? styles.modeBtnActive : {}) }}
+          onClick={() => setMode("word")}>단어 단위</button>
+        {stats && (
+          <span style={{ marginLeft: "auto", fontSize: 12, display: "flex", gap: 10 }}>
+            <span style={{ color: "#4ade80" }}>+{stats.added}</span>
+            <span style={{ color: "#f87171" }}>-{stats.removed}</span>
+          </span>
+        )}
       </div>
-      <AiPanel
-        apiKey={apiKey}
-        systemPrompt={systemMap[style]}
-        placeholder={"변경사항을 설명해주세요:\n\n예:\n- 사용자 로그인 시 JWT 토큰 만료 시간 2h → 24h로 변경\n- 토큰 갱신 로직 추가\n- 관련 테스트 코드 업데이트"}
-        inputLabel="변경사항 설명"
-        outputLabel="커밋 메시지 제안"
-      />
+      <div style={styles.diffInputGrid}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          <label style={styles.label}>원본</label>
+          <textarea style={{ ...styles.textarea, flex: 1 }} placeholder="원본 텍스트를 입력하세요"
+            value={original} onChange={e => setOriginal(e.target.value)} onKeyDown={handleKeyDown} />
+        </div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          <label style={styles.label}>수정본</label>
+          <textarea style={{ ...styles.textarea, flex: 1 }} placeholder="수정된 텍스트를 입력하세요"
+            value={modified} onChange={e => setModified(e.target.value)} onKeyDown={handleKeyDown} />
+        </div>
+      </div>
+      <div style={{ marginTop: 10, marginBottom: 10 }}>
+        <button style={styles.btn} onClick={computeDiff}>▶ 비교  (Ctrl+Enter)</button>
+      </div>
+      <div style={styles.diffOutput}>
+        {diffResult.length === 0
+          ? <span style={styles.placeholder}>비교 결과가 여기에 표시됩니다</span>
+          : <pre style={styles.pre}>
+              {diffResult.map((part, i) => (
+                <span key={i} style={{
+                  backgroundColor: part.added ? "#1a3a2a" : part.removed ? "#3a1a1a" : "transparent",
+                  color: part.added ? "#4ade80" : part.removed ? "#f87171" : C.text,
+                  textDecoration: part.removed ? "line-through" : "none",
+                }}>
+                  {part.value}
+                </span>
+              ))}
+            </pre>
+        }
+      </div>
     </div>
   );
 }
@@ -446,17 +585,13 @@ function MondayPanel() {
 export default function App() {
   const [tab, setTab] = useState("monday");
   const [time, setTime] = useState(new Date());
-  const [apiKey, setApiKey] = useLocalStorage("claude-api-key", "");
-  const [showKeyInput, setShowKeyInput] = useState(false);
-  const [keyDraft, setKeyDraft] = useState("");
 
   useEffect(() => {
     const t = setInterval(() => setTime(new Date()), 1000);
     return () => clearInterval(t);
   }, []);
 
-  const aiPanels = new Set(["sql", "code", "commit"]);
-  const panels = { monday: MondayPanel, sql: SqlPanel, code: CodePanel, commit: CommitPanel, todo: TodoPanel, links: LinksPanel };
+  const panels = { monday: MondayPanel, sql: SqlPanel, json: JsonPanel, commit: CommitPanel, diff: DiffPanel, todo: TodoPanel, links: LinksPanel };
   const Panel = panels[tab];
 
   const tabLabel = NAV_ITEMS.find(n => n.id === tab)?.label || "";
@@ -490,39 +625,7 @@ export default function App() {
           ))}
         </nav>
         <div style={styles.sidebarFooter}>
-          <button
-            style={{ ...styles.navBtn, padding: "8px 20px", borderLeft: "3px solid transparent" }}
-            onClick={() => { setShowKeyInput(!showKeyInput); setKeyDraft(apiKey); }}
-          >
-            <span style={styles.navIcon}>⚙️</span>
-            <span>API 키 설정</span>
-            {apiKey && <span style={{ color: "#3fb950", fontSize: 11, marginLeft: "auto" }}>●</span>}
-          </button>
-          {showKeyInput && (
-            <div style={{ padding: "8px 16px", display: "flex", flexDirection: "column", gap: 6 }}>
-              <input
-                style={{ ...styles.input, fontSize: 11 }}
-                type="password"
-                placeholder="sk-ant-..."
-                value={keyDraft}
-                onChange={e => setKeyDraft(e.target.value)}
-                onKeyDown={e => { if (e.key === "Enter" && keyDraft.trim()) { setApiKey(keyDraft.trim()); setShowKeyInput(false); } }}
-              />
-              <div style={{ display: "flex", gap: 4 }}>
-                <button
-                  style={{ ...styles.btn, fontSize: 11, padding: "4px 10px", flex: 1 }}
-                  onClick={() => { if (keyDraft.trim()) { setApiKey(keyDraft.trim()); setShowKeyInput(false); } }}
-                >저장</button>
-                {apiKey && (
-                  <button
-                    style={{ ...styles.btnSecondary, fontSize: 11, padding: "4px 10px" }}
-                    onClick={() => { setApiKey(""); setKeyDraft(""); }}
-                  >삭제</button>
-                )}
-              </div>
-            </div>
-          )}
-          <div style={styles.footerTip}>💡 AI 기능은 Ctrl+Enter</div>
+          <div style={styles.footerTip}>💡 포맷/비교: Ctrl+Enter</div>
         </div>
       </aside>
 
@@ -534,7 +637,7 @@ export default function App() {
           </h1>
         </header>
         <div style={styles.content}>
-          <Panel {...(aiPanels.has(tab) ? { apiKey } : {})} />
+          <Panel />
         </div>
       </main>
     </div>
@@ -576,8 +679,7 @@ const styles = {
   pageTitle: { margin: 0, fontSize: 18, fontWeight: 700, color: C.text },
   content: { flex: 1, overflow: "auto", padding: 24 },
 
-  // AI Panel
-  aiPanel: {},
+  // Panels
   panelGrid: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, height: "calc(100vh - 200px)" },
   panelLeft: { display: "flex", flexDirection: "column", gap: 10 },
   panelRight: { display: "flex", flexDirection: "column", gap: 10 },
@@ -588,10 +690,16 @@ const styles = {
   placeholder: { color: C.textMuted, fontSize: 13 },
   btn: { padding: "8px 16px", background: C.accent, color: "#0d1117", border: "none", borderRadius: 6, cursor: "pointer", fontWeight: 700, fontSize: 13, fontFamily: "inherit" },
   btnSecondary: { padding: "6px 12px", background: C.surface2, color: C.text, border: `1px solid ${C.border}`, borderRadius: 6, cursor: "pointer", fontSize: 12, fontFamily: "inherit" },
-  spinner: {},
   modeBar: { display: "flex", gap: 6, marginBottom: 12, flexWrap: "wrap" },
   modeBtn: { padding: "5px 12px", background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 4, color: C.textMuted, cursor: "pointer", fontSize: 12, fontFamily: "inherit" },
   modeBtnActive: { background: C.accentDim, border: `1px solid ${C.accent}`, color: C.accent },
+  optionsBar: { display: "flex", gap: 8, marginBottom: 12, alignItems: "center" },
+  formGroup: { display: "flex", flexDirection: "column", gap: 6, marginBottom: 14 },
+  checkRow: { display: "flex", alignItems: "center", gap: 8 },
+
+  // Diff
+  diffInputGrid: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, height: "35vh" },
+  diffOutput: { background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 6, padding: 12, overflow: "auto", maxHeight: "40vh", marginTop: 12 },
 
   // TODO
   todoWrap: {},
