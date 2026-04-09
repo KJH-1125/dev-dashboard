@@ -55,11 +55,16 @@ function SqlPanel() {
         tabWidth: indentSize,
         keywordCase: uppercase ? "upper" : "preserve",
       });
-      // MSSQL 후처리: WITH (nolock) 등 테이블 힌트를 이전 줄에 붙이기
+      // MSSQL 후처리: 테이블 힌트 + JOIN ON 정리
       if (dialect === "transactsql") {
+        const ind = " ".repeat(indentSize);
         result = result
+          // WITH (nolock) 를 테이블명과 같은 줄에
           .replace(/\n\s*WITH\s*\n\s*\((\w+)\)/gi, " WITH ($1)")
-          .replace(/\n\s*(ON)\s+/g, "\n" + " ".repeat(indentSize) + "$1 ");
+          // ON 을 JOIN 줄 끝에 붙이기 (WITH (hint) 뒤에 올 수도 있음)
+          .replace(/((?:LEFT|RIGHT|INNER|OUTER|CROSS|FULL)?\s*JOIN\s+\S+(?:\s+WITH\s+\(\w+\))?)\s*\n\s*ON\s+/gi, "$1 ON ")
+          // AND 조건을 한 단계 깊게 들여쓰기
+          .replace(/(\S+\s+ON\s+.+)\n\s*AND\s+/g, "$1\n" + ind + ind + "AND ");
       }
       setOutput(result);
     } catch (e) {
