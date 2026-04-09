@@ -395,13 +395,14 @@ function TodoPanel() {
   const [filter, setFilter] = useState("all");
   const [editId, setEditId] = useState(null);
   const [editText, setEditText] = useState("");
+  const [expandedId, setExpandedId] = useState(null);
 
   const add = () => {
     if (!input.trim()) return;
     setTodos([...todos, {
       id: Date.now(), text: input.trim(), done: false,
       ts: new Date().toLocaleDateString("ko-KR"),
-      priority, dueDate: dueDate || null,
+      priority, dueDate: dueDate || null, memo: "",
     }]);
     setInput(""); setDueDate("");
   };
@@ -416,6 +417,8 @@ function TodoPanel() {
     setEditId(null); setEditText("");
   };
   const cancelEdit = () => { setEditId(null); setEditText(""); };
+  const toggleExpand = (id) => setExpandedId(expandedId === id ? null : id);
+  const updateMemo = (id, memo) => setTodos(todos.map(t => t.id === id ? { ...t, memo } : t));
 
   const sorted = [...todos].sort((a, b) => {
     const pOrder = { high: 0, medium: 1, low: 2 };
@@ -473,28 +476,43 @@ function TodoPanel() {
           const overdue = !t.done && isOverdue(t.dueDate);
           return (
             <div key={t.id} style={{ ...styles.todoItem, opacity: t.done ? 0.5 : 1,
-              borderLeft: `3px solid ${pri.color}` }}>
-              <input type="checkbox" checked={t.done} onChange={() => toggle(t.id)}
-                style={{ cursor: "pointer", accentColor: "#38bdf8", flexShrink: 0 }} />
-              {editId === t.id ? (
-                <input style={{ ...styles.input, flex: 1, marginBottom: 0 }}
-                  value={editText} onChange={e => setEditText(e.target.value)} autoFocus
-                  onKeyDown={e => { if (e.key === "Enter") saveEdit(); if (e.key === "Escape") cancelEdit(); }}
-                  onBlur={saveEdit} />
-              ) : (
-                <span style={{ ...styles.todoText, textDecoration: t.done ? "line-through" : "none", cursor: "pointer" }}
-                  onDoubleClick={() => !t.done && startEdit(t)}>{t.text}</span>
+              borderLeft: `3px solid ${pri.color}`, flexDirection: "column", alignItems: "stretch" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <input type="checkbox" checked={t.done} onChange={() => toggle(t.id)}
+                  style={{ cursor: "pointer", accentColor: "#38bdf8", flexShrink: 0 }} />
+                {editId === t.id ? (
+                  <input style={{ ...styles.input, flex: 1, marginBottom: 0 }}
+                    value={editText} onChange={e => setEditText(e.target.value)} autoFocus
+                    onKeyDown={e => { if (e.key === "Enter") saveEdit(); if (e.key === "Escape") cancelEdit(); }}
+                    onBlur={saveEdit} />
+                ) : (
+                  <span style={{ ...styles.todoText, textDecoration: t.done ? "line-through" : "none", cursor: "pointer" }}
+                    onDoubleClick={() => !t.done && startEdit(t)}>{t.text}</span>
+                )}
+                <span style={{ fontSize: 10, padding: "2px 6px", borderRadius: 3,
+                  background: pri.bg, color: pri.color, flexShrink: 0 }}>{pri.label}</span>
+                {t.dueDate && (
+                  <span style={{ fontSize: 11, color: overdue ? "#f87171" : C.textMuted, flexShrink: 0,
+                    fontWeight: overdue ? 700 : 400 }}>
+                    {formatDue(t.dueDate)}
+                  </span>
+                )}
+                <span style={styles.todoDate}>{t.ts}</span>
+                <button style={{ ...styles.delBtn, fontSize: 12, color: expandedId === t.id ? C.accent : C.textMuted }}
+                  onClick={() => toggleExpand(t.id)}
+                  title="메모">{expandedId === t.id ? "▲" : (t.memo ? "📝" : "▼")}</button>
+                <button style={styles.delBtn} onClick={() => remove(t.id)}>✕</button>
+              </div>
+              {expandedId === t.id && (
+                <div style={{ marginTop: 8, paddingLeft: 28 }}>
+                  <textarea
+                    style={{ ...styles.textarea, flex: "none", height: 100, width: "100%", fontSize: 12 }}
+                    placeholder="상세 메모를 작성하세요... (작업 방법, 참고 사항 등)"
+                    value={t.memo || ""}
+                    onChange={e => updateMemo(t.id, e.target.value)}
+                  />
+                </div>
               )}
-              <span style={{ fontSize: 10, padding: "2px 6px", borderRadius: 3,
-                background: pri.bg, color: pri.color, flexShrink: 0 }}>{pri.label}</span>
-              {t.dueDate && (
-                <span style={{ fontSize: 11, color: overdue ? "#f87171" : C.textMuted, flexShrink: 0,
-                  fontWeight: overdue ? 700 : 400 }}>
-                  {formatDue(t.dueDate)}
-                </span>
-              )}
-              <span style={styles.todoDate}>{t.ts}</span>
-              <button style={styles.delBtn} onClick={() => remove(t.id)}>✕</button>
             </div>
           );
         })}
