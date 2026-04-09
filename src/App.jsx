@@ -11,13 +11,13 @@ const supabase = createClient(
 
 // ── 상수 ──────────────────────────────────────────────
 const NAV_ITEMS = [
-  { id: "monday", label: "Monday", icon: "📋" },
+  { id: "todo",   label: "TODO", icon: "✅" },
+  { id: "links",  label: "링크 모음", icon: "🔗" },
+  { id: "diff",   label: "Diff 비교", icon: "🔀" },
   { id: "sql",    label: "SQL 포맷터", icon: "🗄️" },
   { id: "json",   label: "JSON 포맷터", icon: "{ }" },
   { id: "commit", label: "커밋 빌더", icon: "📝" },
-  { id: "diff",   label: "Diff 비교", icon: "🔀" },
-  { id: "todo",   label: "TODO", icon: "✅" },
-  { id: "links",  label: "링크 모음", icon: "🔗" },
+  { id: "monday", label: "Monday", icon: "📋" },
 ];
 
 // ── 유틸 ──────────────────────────────────────────────
@@ -749,7 +749,7 @@ function MondayPanel() {
 
 // ── 메인 앱 ───────────────────────────────────────────
 export default function App() {
-  const [tab, setTab] = useState("monday");
+  const [tab, setTab] = useState("todo");
   const [time, setTime] = useState(new Date());
 
   useEffect(() => {
