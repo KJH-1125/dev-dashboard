@@ -50,11 +50,17 @@ function SqlPanel() {
     if (!input.trim()) return;
     setError("");
     try {
-      const result = sqlFormat(input, {
+      let result = sqlFormat(input, {
         language: dialect,
         tabWidth: indentSize,
         keywordCase: uppercase ? "upper" : "preserve",
       });
+      // MSSQL 후처리: WITH (nolock) 등 테이블 힌트를 이전 줄에 붙이기
+      if (dialect === "transactsql") {
+        result = result
+          .replace(/\n\s*WITH\s*\n\s*\((\w+)\)/gi, " WITH ($1)")
+          .replace(/\n\s*(ON)\s+/g, "\n" + " ".repeat(indentSize) + "$1 ");
+      }
       setOutput(result);
     } catch (e) {
       setError("포맷 오류: " + e.message);
