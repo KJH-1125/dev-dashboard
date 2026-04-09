@@ -22,10 +22,16 @@ function useLocalStorage(key, init) {
   return [val, save];
 }
 
-async function callClaude(systemPrompt, userContent, onChunk) {
+async function callClaude(apiKey, systemPrompt, userContent, onChunk) {
+  if (!apiKey) throw new Error("API 키를 먼저 설정해주세요 (사이드바 하단 ⚙️)");
   const res = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      "x-api-key": apiKey,
+      "anthropic-version": "2023-06-01",
+      "anthropic-dangerous-direct-browser-access": "true",
+    },
     body: JSON.stringify({
       model: CLAUDE_MODEL,
       max_tokens: 1000,
@@ -33,7 +39,10 @@ async function callClaude(systemPrompt, userContent, onChunk) {
       messages: [{ role: "user", content: userContent }],
     }),
   });
-  if (!res.ok) throw new Error(`API error ${res.status}`);
+  if (!res.ok) {
+    const errBody = await res.json().catch(() => null);
+    throw new Error(errBody?.error?.message || `API error ${res.status}`);
+  }
   const data = await res.json();
   const text = data.content?.map(b => b.text || "").join("") || "";
   onChunk(text);
@@ -41,7 +50,7 @@ async function callClaude(systemPrompt, userContent, onChunk) {
 }
 
 // ── AI 패널 공통 래퍼 ─────────────────────────────────
-function AiPanel({ title, placeholder, systemPrompt, inputLabel = "입력", outputLabel = "결과", formatOutput }) {
+function AiPanel({ apiKey, placeholder, systemPrompt, inputLabel = "입력", outputLabel = "결과", formatOutput }) {
   const [input, setInput] = useState("");
   const [output, setOutput] = useState("");
   const [loading, setLoading] = useState(false);
@@ -51,7 +60,7 @@ function AiPanel({ title, placeholder, systemPrompt, inputLabel = "입력", outp
     if (!input.trim()) return;
     setLoading(true); setError(""); setOutput("");
     try {
-      await callClaude(systemPrompt, input, setOutput);
+      await callClaude(apiKey, systemPrompt, input, setOutput);
     } catch (e) {
       setError(e.message);
     } finally {
@@ -95,7 +104,7 @@ function AiPanel({ title, placeholder, systemPrompt, inputLabel = "입력", outp
 }
 
 // ── SQL 도우미 ─────────────────────────────────────────
-function SqlPanel() {
+function SqlPanel({ apiKey }) {
   const [mode, setMode] = useState("explain");
   const modes = [
     { id: "explain", label: "설명" },
@@ -128,6 +137,7 @@ function SqlPanel() {
         ))}
       </div>
       <AiPanel
+        apiKey={apiKey}
         systemPrompt={systemMap[mode]}
         placeholder={placeholders[mode]}
         inputLabel="SQL 입력"
@@ -138,7 +148,7 @@ function SqlPanel() {
 }
 
 // ── 코드 리뷰 ─────────────────────────────────────────
-function CodePanel() {
+function CodePanel({ apiKey }) {
   const [mode, setMode] = useState("review");
   const modes = [
     { id: "review", label: "코드 리뷰" },
@@ -168,6 +178,7 @@ function CodePanel() {
         ))}
       </div>
       <AiPanel
+        apiKey={apiKey}
         systemPrompt={systemMap[mode]}
         placeholder={placeholders[mode]}
         inputLabel="코드 입력"
@@ -178,7 +189,7 @@ function CodePanel() {
 }
 
 // ── 커밋 메시지 ───────────────────────────────────────
-function CommitPanel() {
+function CommitPanel({ apiKey }) {
   const [style, setStyle] = useState("conventional");
   const styles2 = [
     { id: "conventional", label: "Conventional" },
@@ -203,6 +214,7 @@ function CommitPanel() {
         ))}
       </div>
       <AiPanel
+        apiKey={apiKey}
         systemPrompt={systemMap[style]}
         placeholder={"변경사항을 설명해주세요:\n\n예:\n- 사용자 로그인 시 JWT 토큰 만료 시간 2h → 24h로 변경\n- 토큰 갱신 로직 추가\n- 관련 테스트 코드 업데이트"}
         inputLabel="변경사항 설명"
@@ -434,12 +446,16 @@ function MondayPanel() {
 export default function App() {
   const [tab, setTab] = useState("monday");
   const [time, setTime] = useState(new Date());
+  const [apiKey, setApiKey] = useLocalStorage("claude-api-key", "");
+  const [showKeyInput, setShowKeyInput] = useState(false);
+  const [keyDraft, setKeyDraft] = useState("");
 
   useEffect(() => {
     const t = setInterval(() => setTime(new Date()), 1000);
     return () => clearInterval(t);
   }, []);
 
+  const aiPanels = new Set(["sql", "code", "commit"]);
   const panels = { monday: MondayPanel, sql: SqlPanel, code: CodePanel, commit: CommitPanel, todo: TodoPanel, links: LinksPanel };
   const Panel = panels[tab];
 
@@ -474,6 +490,38 @@ export default function App() {
           ))}
         </nav>
         <div style={styles.sidebarFooter}>
+          <button
+            style={{ ...styles.navBtn, padding: "8px 20px", borderLeft: "3px solid transparent" }}
+            onClick={() => { setShowKeyInput(!showKeyInput); setKeyDraft(apiKey); }}
+          >
+            <span style={styles.navIcon}>⚙️</span>
+            <span>API 키 설정</span>
+            {apiKey && <span style={{ color: "#3fb950", fontSize: 11, marginLeft: "auto" }}>●</span>}
+          </button>
+          {showKeyInput && (
+            <div style={{ padding: "8px 16px", display: "flex", flexDirection: "column", gap: 6 }}>
+              <input
+                style={{ ...styles.input, fontSize: 11 }}
+                type="password"
+                placeholder="sk-ant-..."
+                value={keyDraft}
+                onChange={e => setKeyDraft(e.target.value)}
+                onKeyDown={e => { if (e.key === "Enter" && keyDraft.trim()) { setApiKey(keyDraft.trim()); setShowKeyInput(false); } }}
+              />
+              <div style={{ display: "flex", gap: 4 }}>
+                <button
+                  style={{ ...styles.btn, fontSize: 11, padding: "4px 10px", flex: 1 }}
+                  onClick={() => { if (keyDraft.trim()) { setApiKey(keyDraft.trim()); setShowKeyInput(false); } }}
+                >저장</button>
+                {apiKey && (
+                  <button
+                    style={{ ...styles.btnSecondary, fontSize: 11, padding: "4px 10px" }}
+                    onClick={() => { setApiKey(""); setKeyDraft(""); }}
+                  >삭제</button>
+                )}
+              </div>
+            </div>
+          )}
           <div style={styles.footerTip}>💡 AI 기능은 Ctrl+Enter</div>
         </div>
       </aside>
@@ -486,7 +534,7 @@ export default function App() {
           </h1>
         </header>
         <div style={styles.content}>
-          <Panel />
+          <Panel {...(aiPanels.has(tab) ? { apiKey } : {})} />
         </div>
       </main>
     </div>
